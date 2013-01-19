@@ -18,6 +18,7 @@ private:
 	// TODO: Make this configurable size later...
 	ir_decoder_edge_t _frame_buffer[64];
 	ir_decoder_edge_t _latched_frame_buffer[64];
+	uint16_t _latched_frame_length;
     
     uint32_t _last_timestamp;
   	
@@ -33,6 +34,8 @@ public:
 	BTHI_IR_Decoder();
 	void setup(void);
 	void interrupt(void);
+	uint8_t isFrameAvailable(void);
+	int16_t copyFrame(ir_decoder_edge_t *dest_buffer, uint16_t buffer_size);
 };
 
 extern BTHI_IR_Decoder IR_Decoder;

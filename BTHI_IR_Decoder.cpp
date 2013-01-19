@@ -22,6 +22,7 @@ void BTHI_IR_Decoder::setup(void) {
     _last_timestamp = 0;
     _sample_index = 0;
     _frame_available = 0;
+    _latched_frame_length = 0;
 
     _k_dead_time = K_DEADTIME_DEFAULT_US;
 
@@ -32,8 +33,6 @@ void BTHI_IR_Decoder::setup(void) {
     digitalWrite(_pin,HIGH);
     delay(122); // 
     digitalWrite(_pin,LOW);
-    
-
 }
 
 // Interrupt handler
@@ -56,21 +55,70 @@ void BTHI_IR_Decoder::interrupt() {
     // Record the sample at the current index
     _frame_buffer[_sample_index].level = 0; // XXX:
     _frame_buffer[_sample_index].duration = elapsed; // XXX:
-
+    
     _sample_index++;
 
     if (elapsed > _k_dead_time) {
+        // Latch the data and set the flag that new data is available
+        // TODO: Theoretically, you only need to copy as many entries as were 
+        // valid.
+        memcpy(_latched_frame_buffer, _frame_buffer, sizeof(_frame_buffer));
+        // Record how many valid samples we took
+        _latched_frame_length = _sample_index;
+
+        _frame_available = 1;
+        
         // Have to reset the sample index since we're starting over with a new
         // frame
         _sample_index = 0;
-        
-        // Latch the data and set the flag that new data is available
-        memcpy(_latched_frame_buffer, _frame_buffer, sizeof(_frame_buffer));
-        _frame_available = 1;
     }
 
     // TODO: If the _frame_available flag is already set, then we should flag
     // it as a fault and make that available through some API
+}
+
+uint8_t BTHI_IR_Decoder::isFrameAvailable(void) {
+    // Check the frame available flag.  Don't need to disable interrupts (I
+    // think).
+    return _frame_available;
+}
+
+/**
+ * This function will copy the frame from the internal buffer to the supplied
+ * buffer.  If there is no frame available, then no copy is performed and -1
+ * is returned.  Otherwise, this function will copy up to buffer_size entries
+ * to the supplied pointer.
+ *
+ * dest_buffer:
+ * frame_size: This is the number of entries in the destination buffer, NOT
+ * the number of bytes in the dest buffer.
+ */
+int16_t BTHI_IR_Decoder::copyFrame(ir_decoder_edge_t *dest_buffer, uint16_t buffer_size) {
+    if (0 == _frame_available) {
+       // TODO: Make E_NOT_OK
+       return -1;
+    }
+    
+    // TODO: Have to decide what to do if we know we overran the internal
+    // buffer bounds.  I think we should return a special error code.
+
+    // Have to disable interrupts at this point to avoid having the latched
+    // frame data overwritten during the copy.
+    cli();
+
+    // TODO: consider typdefing uint16 that has to accomodate the largest
+    // buffer size.
+    // Copy only up to the minimum of the supplied buffer size and the size of
+    // the frame in the internal buffer.
+    uint16_t num_samples = min(buffer_size, _latched_frame_length);
+    memcpy(dest_buffer, _latched_frame_buffer, 
+            num_samples * sizeof(_latched_frame_buffer[0]));
+
+    // Put down the flag
+    _frame_available = 0;
+
+    // Re-enable interrupts
+    sei();
 }
 
 BTHI_IR_Decoder IR_Decoder;
