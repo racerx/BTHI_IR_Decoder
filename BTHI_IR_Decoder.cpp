@@ -1,7 +1,7 @@
 /*
  *
  */
-
+#include "Arduino.h"
 #include "BTHI_IR_Decoder.h"
 
 // We use IR Decoder on Arduino pin 2, which is atmega's PD2
@@ -24,6 +24,16 @@ void BTHI_IR_Decoder::setup(void) {
     _frame_available = 0;
 
     _k_dead_time = K_DEADTIME_DEFAULT_US;
+
+    // pin debug to check if we are getting here
+    _pin = 7;
+    pinMode(_pin, OUTPUT);
+    digitalWrite(_pin,LOW);
+    digitalWrite(_pin,HIGH);
+    delay(122); // 
+    digitalWrite(_pin,LOW);
+    
+
 }
 
 // Interrupt handler

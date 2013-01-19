@@ -27,6 +27,8 @@ private:
 	
     uint32_t _k_dead_time;
 
+    uint8_t _pin;
+
 public:
 	BTHI_IR_Decoder();
 	void setup(void);
