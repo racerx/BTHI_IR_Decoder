@@ -3,6 +3,7 @@
 void setup() {
     IR_Decoder.setup();
     Serial.begin(115200);
+    Serial.println("Waiting for Frames:");
 }
 
 void loop() {
