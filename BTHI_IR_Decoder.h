@@ -9,7 +9,7 @@
 typedef unsigned int command_t;
 
 typedef struct {
-	uint8_t level;
+	bool level;
 	uint32_t duration;
 } ir_decoder_edge_t;
 

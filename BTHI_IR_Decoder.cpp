@@ -40,12 +40,16 @@ void BTHI_IR_Decoder::interrupt() {
     //if (PIN_ATMEGA & (1 << PINBIT_ATMEGA)) return;  // Only consider falling edges
     uint32_t now;
     uint32_t elapsed;
+    bool pinState;
     
     now = micros();
     elapsed = now - _last_timestamp;
 
     _last_timestamp = now;
   
+    // toggle the pin so we know that we are in the ISR again
+    pinState = digitalRead(_pin);
+    digitalWrite(_pin,!pinState);
     // TODO: Handle overflow
     
     if (_sample_index >= sizeof(_frame_buffer)) {
@@ -53,7 +57,7 @@ void BTHI_IR_Decoder::interrupt() {
     }
     
     // Record the sample at the current index
-    _frame_buffer[_sample_index].level = 0; // XXX:
+    _frame_buffer[_sample_index].level = pinState; // XXX:
     _frame_buffer[_sample_index].duration = elapsed; // XXX:
     
     _sample_index++;
