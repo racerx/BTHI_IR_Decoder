@@ -19,10 +19,13 @@ void BTHI_IR_Decoder::setup(void) {
 
     // Clear out the frame buffer
     memset(_frame_buffer, 0, sizeof(_frame_buffer));
+
     _last_timestamp = 0;
     _sample_index = 0;
     _frame_available = 0;
     _latched_frame_length = 0;
+    _sample_overflows = 0;
+	_frame_overruns = 0;
 
     _k_dead_time = K_DEADTIME_DEFAULT_US;
 
@@ -53,7 +56,9 @@ void BTHI_IR_Decoder::interrupt() {
     // TODO: Handle overflow
     
     if (_sample_index >= sizeof(_frame_buffer)) {
-        // XXX: Overflow condition
+        if (_sample_overflows < 0xFFFF) {
+            _sample_overflows++;
+        }
     }
     
     // Record the sample at the current index
@@ -67,18 +72,48 @@ void BTHI_IR_Decoder::interrupt() {
         // TODO: Theoretically, you only need to copy as many entries as were 
         // valid.
         memcpy(_latched_frame_buffer, _frame_buffer, sizeof(_frame_buffer));
+
         // Record how many valid samples we took
         _latched_frame_length = _sample_index;
 
+        // If the frame was already waiting, it means that we missed a frame.
+        // We call this a "frame overrun"
+        if (1 == _frame_available) {
+            if (_frame_overruns < 0xFFFF) {
+                _frame_overruns++;
+            }
+        }
+        
         _frame_available = 1;
         
         // Have to reset the sample index since we're starting over with a new
         // frame
         _sample_index = 0;
     }
+}
 
-    // TODO: If the _frame_available flag is already set, then we should flag
-    // it as a fault and make that available through some API
+uint16_t BTHI_IR_Decoder::getFrameOverrunCount(void) {
+    return _frame_overruns;
+}
+
+uint16_t BTHI_IR_Decoder::clearFrameOverrunCount(void) {
+    uint16_t tmp = _frame_overruns;
+
+    _frame_overruns = 0;
+
+    return tmp;
+}
+
+uint16_t BTHI_IR_Decoder::getSampleOverflowCount(void) {
+    return _sample_overflows;
+}
+
+uint16_t BTHI_IR_Decoder::clearSampleOverflowCount(void) {
+    uint16_t tmp = _sample_overflows;
+
+    _sample_overflows = 0;
+
+    return tmp;
 }
 
 uint8_t BTHI_IR_Decoder::isFrameAvailable(void) {

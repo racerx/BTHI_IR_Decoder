@@ -27,6 +27,9 @@ private:
 	uint8_t _frame_available;
 	
     uint32_t _k_dead_time;
+	
+	uint16_t _sample_overflows;
+	uint16_t _frame_overruns;
 
     uint8_t _pin;
 
@@ -36,6 +39,11 @@ public:
 	void interrupt(void);
 	uint8_t isFrameAvailable(void);
 	int16_t copyFrame(ir_decoder_edge_t *dest_buffer, uint16_t buffer_size);
+
+	uint16_t getFrameOverrunCount(void);
+	uint16_t clearFrameOverrunCount(void);
+	uint16_t getSampleOverflowCount(void);
+	uint16_t clearSampleOverflowCount(void);
 };
 
 extern BTHI_IR_Decoder IR_Decoder;
