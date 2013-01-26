@@ -4,40 +4,60 @@
 #include <platform.h>
 #include <stdlib.h>
 
-#define K_DEADTIME_DEFAULT_US  15000
-
-typedef unsigned int command_t;
-
 typedef struct {
-	bool level;
-	uint32_t duration;
-} ir_decoder_edge_t;
+	uint16_t duration;
+} ir_segment_t;
 
-class BTHI_IR_Decoder {
-private:
-	// TODO: Make this configurable size later...
-	ir_decoder_edge_t _frame_buffer[64];
-	ir_decoder_edge_t _latched_frame_buffer[64];
-	uint16_t _latched_frame_length;
-    
-    uint32_t _last_timestamp;
-  	
-	uint16_t _sample_index;
-    
-	uint8_t _frame_available;
-	
-    uint32_t _k_dead_time;
+typedef enum {
+	IR_POLARITY_LOW = 0,
+	IR_POLARITY_HIGH,
+	IR_POLARITY_AUTO
+} ir_polarity_t;
 
-    uint8_t _pin;
-
+class IR_StreamDecoder {
 public:
-	BTHI_IR_Decoder();
-	void setup(void);
-	void interrupt(void);
-	uint8_t isFrameAvailable(void);
-	int16_t copyFrame(ir_decoder_edge_t *dest_buffer, uint16_t buffer_size);
+	virtual void endDecode(void);
+	virtual void decodeEdge(uint16_t duration);
 };
 
-extern BTHI_IR_Decoder IR_Decoder;
+class IR_HwInterface {
+private:
+	uint8_t _pin;
+	IR_StreamDecoder *_decoder;
+
+public:
+	IR_HwInterface();
+	void setup(IR_StreamDecoder *stream_decoder, uint8_t pin, 
+			ir_polarity_t polarity);
+	void captureInterrupt();
+	void overflowInterrupt();
+};
+
+class IR_BufferingStreamDecoder : public IR_StreamDecoder {
+private:
+	ir_segment_t *_segments;
+	uint8_t _max_segments;
+	uint8_t _count;
+	uint8_t _segment_overflows;
+	uint8_t _frame_complete;
+	uint8_t _first_edge;
+
+public:
+	IR_BufferingStreamDecoder(void);
+	void decodeEdge(uint16_t duration);
+	void endDecode(void);
+
+	void setSegmentBuffer(ir_segment_t *segments, 
+		uint8_t num_segments);
+	void debugPrintFrame(void);
+	void receiveNextFrame(void);
+	uint8_t isDone(void);
+	uint8_t getSegmentCount(void);
+	uint8_t getSegmentOverflowCount(void);
+	uint8_t clearSegmentOverflowCount(void);
+};
+
+extern IR_HwInterface IR_InputCaptureInterface;
+
 #endif
 
