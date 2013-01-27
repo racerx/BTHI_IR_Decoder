@@ -27,12 +27,12 @@ void setup() {
 void loop() {
   
     if (decoder.isDone()) {
-      Serial.println("Frame Received!");
+      Serial.println("\n------ Frame Received! ------");
       decoder.debugPrintFrame();
       
       // This will allow the decoder to accept another frame 
       // (overwriting the one we just printed out)
-      decoder.receiveNextFrame();
+      decoder.readyForNextFrame();
     }
 }
 

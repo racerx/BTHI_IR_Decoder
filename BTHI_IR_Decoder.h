@@ -16,8 +16,8 @@ typedef enum {
 
 class IR_StreamDecoder {
 public:
-	virtual void endDecode(void);
-	virtual void decodeEdge(uint16_t duration);
+	virtual void edgeEvent(uint16_t duration);
+	virtual void endOfFrameEvent(void);
 };
 
 class IR_HwInterface {
@@ -33,6 +33,12 @@ public:
 	void overflowInterrupt();
 };
 
+/**
+ * Decoder delegate implementation that buffers all of the waveform segments
+ * it sees for later analysis instead of decoding them on the fly. This is
+ * good for reverse engineering a protocol and serves as a
+ * manufacturer-independent example that we can ship.
+ */
 class IR_BufferingStreamDecoder : public IR_StreamDecoder {
 private:
 	ir_segment_t *_segments;
@@ -44,13 +50,13 @@ private:
 
 public:
 	IR_BufferingStreamDecoder(void);
-	void decodeEdge(uint16_t duration);
-	void endDecode(void);
+	void edgeEvent(uint16_t duration);
+	void endOfFrameEvent(void);
 
 	void setSegmentBuffer(ir_segment_t *segments, 
 		uint8_t num_segments);
 	void debugPrintFrame(void);
-	void receiveNextFrame(void);
+	void readyForNextFrame(void);
 	uint8_t isDone(void);
 	uint8_t getSegmentCount(void);
 	uint8_t getSegmentOverflowCount(void);

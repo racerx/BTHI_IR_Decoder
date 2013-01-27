@@ -33,9 +33,22 @@
 #include <Arduino.h>
 #include "BTHI_IR_Decoder.h"
 
-// We have to instantiate this because we're wiring it manually to the timer1
-// capture and overflow ISRs. The instance needs to be valid.
+#define IR_DEFAULT_IC_PIN   8
+
+/* We have to instantiate this because we're wiring it manually to the timer1
+ * capture and overflow ISRs. The instance needs to be valid.
+ */
 IR_HwInterface IR_InputCaptureInterface;
+
+/**
+ * Constructor for the Hardware Interface. Does nothing since we use setup()
+ * to provide the run-time parameters
+ */
+IR_HwInterface::IR_HwInterface() {
+	_pin = IR_DEFAULT_IC_PIN;
+	_decoder = NULL;
+}
+
 
 /**
  * Setup routine. This routine must be called during your projects setup()
@@ -45,21 +58,29 @@ IR_HwInterface IR_InputCaptureInterface;
  *
  * NOTE: After this call, your PWM's using Timer1 won't work anymore.
  *
- * stream_decoder: This delegate will be fed edges and end of frame events.
- * pin: Must be pin 8 on the Uno. TODO: what about others?
- * polarity: This determines what the initial edge the input capture unit
- *    should trigger on. If your receiver is nominally HIGH when there is no
- *    IR activity, then you should choose IR_POLARITY_HIGH. If it's nominally
- *    LOW, then choose IR_POLARITY_LOW. If you just don't know yet, you can
- *    also choose IR_POLARITY_AUTO. This option looks at the level on the line
- *    and tries to figure it out for you. Probably ok.. but not foolproof.
+ * Parameters:
+ *      stream_decoder: This delegate will be fed edges and end of frame 
+ *          events.
+ *      pin: Must be pin 8 on the Uno. TODO: what about others?
+ *      polarity: This determines what the initial edge the input capture 
+ *          unit should trigger on. If your receiver is nominally HIGH when 
+ *          there is no IR activity, then you should choose IR_POLARITY_HIGH. 
+ *          If it's nominally LOW, then choose IR_POLARITY_LOW. If you just 
+ *          don't know yet, you can also choose IR_POLARITY_AUTO. This option 
+ *          looks at the level on the line and tries to figure it out for you. 
+ *          Probably ok.. but not foolproof.
  *
  */
 void IR_HwInterface::setup(IR_StreamDecoder *stream_decoder, 
         uint8_t pin, ir_polarity_t polarity) {
+    // Make sure interrupts are disabled.  We're not entirely sure of what was
+    // done before calling our setup.
+    cli();
+    
     _pin = pin;
     _decoder = stream_decoder;
-    
+   
+     
     // Set Initial Timer value
     TCNT1 = 0;
     
@@ -91,43 +112,77 @@ void IR_HwInterface::setup(IR_StreamDecoder *stream_decoder,
     TIMSK1 = (1 << ICIE1);
 
     // Noise cancellation on and prescaler /8
+    // This gives a tick period of 50us
+    // 1 / (16000000 Hz /8) = 50us
     TCCR1B = (1 << ICNC1) | (1 << CS11);
 
+    // The pin needs to be an input for input capture to work
     pinMode(pin, INPUT);
+
+    // Re-enable interrupts
+    sei();
 }
 
-IR_HwInterface::IR_HwInterface() {
-}
-
-void IR_HwInterface::overflowInterrupt() {
+/**
+ * This function implements the overflow interrupt ISR for Timer 1. This
+ * interrupt fires when the TCNT overflows from 0xFFFF to 0x0000. For us, it
+ * means that it's been 65536 * 50us = 0.032768s (32.768 ms) since the last
+ * edge. This is enough time to be certain that the transmitter has finished a
+ * frame and from what I've seen, also enough time that it doesn't catch the
+ * edge of a subsequent frame.
+ *
+ * NOTE: Should be called from the TIMER1_OVF_vect ISR
+ */
+void IR_HwInterface::overflowInterrupt(void) {
     // No more overflow interrupt until it is re-enabled in the capture
     // interrupt.
     TIMSK1 &= ~(1<<TOIE1);
     
-    if (_decoder) {
-        _decoder->endDecode();
+    // Tell our decoding delegate that it's the end of the frame
+    if (NULL != _decoder) {
+        _decoder->endOfFrameEvent();
     }
 }
 
-// Interrupt handler
-void IR_HwInterface::captureInterrupt() {
+/**
+ * This function implements the edge capture interrupt ISR for Timer 1. This
+ * interrupt fires when an edge occurs on our input pin in the direction
+ * matching the ICES1 field of the TCCR1B register (rising or falling).
+ *
+ * At the time this interrupt fires, Timer 1 has already cleared the interrupt
+ * flag, and TCNT has been latched into the ICR1 register (and continues to
+ * run). We need to reset TCNT back to 0 as quickly as possible so that ICR1
+ * always contains the number of 50us ticks since the last edge. This means
+ * we don't need to do any now-then math to figure out elapsed time.
+ *
+ * Next, we'll enable the overflow interrupt (see
+ * IR_HwInterface::overflowInterrupt) which will fire if we don't get another
+ * edge before 0xFFFFD ticks.
+ *
+ * NOTE: Should be called from the TIMER1_CAPT_vect ISR
+ */
+void IR_HwInterface::captureInterrupt(void) {
     uint16_t elapsed;
     uint8_t level;
     
     // Reset TCNT1
     TCNT1 = 0;
 
+    // ICR1 contains TCNT1 value at the time of the edge event
     elapsed = ICR1;
     
     // Start listening for overflow as well as the input capture interrupt
     // Make sure to clear the overflow flag, otherwise it will trigger
     // immediately, giving us a premature end of frame
     TIFR1 = (1 << TOV1);
-    TIMSK1 = (1<<ICIE1) | (1<<TOIE1);
+    TIMSK1 = (1 << ICIE1) | (1 << TOIE1);
 
-    level = digitalRead(_pin);
-    
-    if (0 == level) {
+    // Figure out what the current level is by looking at what condition we
+    // had used to capture the edge.  If it was rising, the level is obviously
+    // HIGH and we need to now look for a falling edge (and vice versa).
+    level = (TCCR1B & (1 << ICES1)) != 0 ? HIGH : LOW;
+
+    if (LOW == level) {
         // Next edge is rising
         TCCR1B |= (1 << ICES1);
     } else {
@@ -135,12 +190,19 @@ void IR_HwInterface::captureInterrupt() {
         TCCR1B &= ~(1 << ICES1);
     }
 
-    // Pass it on to the decode layer
-    if (_decoder) {
-        _decoder->decodeEdge(elapsed);
+    // Pass it on to the decode delegate
+    if (NULL != _decoder) {
+        _decoder->edgeEvent(elapsed);
     }
 }
 
+/**
+ * Constructor for the IR_BufferingStreamDecoder, a Decoder delegate
+ * implementation that buffers all of the waveform segments
+ * it sees for later analysis.
+ *
+ * Does nothing but initialize internal state.
+ */
 IR_BufferingStreamDecoder::IR_BufferingStreamDecoder(void) {
 	ir_segment_t *_segments = NULL;
 	_max_segments = 0;
@@ -150,6 +212,17 @@ IR_BufferingStreamDecoder::IR_BufferingStreamDecoder(void) {
     _first_edge = 1;
 }
 
+/**
+ * Debugging routine that prints the contents of the current frame. Be
+ * careful, because reception could be in progress at the time. We recommend
+ * calling it like this:
+ *
+ *  if (decoder.isDone()) {
+ *      decoder.debugPrintFrame();
+ *      decoder.receiveNextFrame();
+ *  }
+ *
+ */
 void IR_BufferingStreamDecoder::debugPrintFrame(void) {
     Serial.print("Max Segments: ");
     Serial.println(_max_segments);
@@ -165,13 +238,39 @@ void IR_BufferingStreamDecoder::debugPrintFrame(void) {
     }
 }
 
-void IR_BufferingStreamDecoder::endDecode(void) {
+/**
+ * IR_StreamDecoder implementation of endOfFrameEvent. We use an internal flag
+ * to record that we're received the end of a frame. We'll set that flag here
+ * if we've seen any edges in the frame.
+ *
+ * After the HwImplementation calls this method, we don't allow any changes to
+ * be made to the received frame to give you time to process it. When done
+ * processing, calling the readyForNextFrame() method puts the flag down so we
+ * can receive the next frame.
+ */
+void IR_BufferingStreamDecoder::endOfFrameEvent(void) {
     if (_count > 0) {
         _frame_complete = 1;
     }
 }
 
-void IR_BufferingStreamDecoder::decodeEdge(uint16_t duration) {
+/**
+ * IR_StreamDecoder implementation of edgeEvent. We look at the duration
+ * provided and we store it in the next slot in our buffer. In cases where the
+ * buffer isn't large enough, we increment our count of segment overflows (see 
+ * getSegmentOverflowCount()) and drop the duration. This is a clue to you
+ * that whatever remote control you're using requires you to use a larger
+ * segment buffer.
+ *
+ * NOTE: We also drop the first segment as it isn't helpful. It represents a
+ * random duration between the last TCNT1 overflow and the first edge of the
+ * waveform--not helpful.
+ *
+ * Parameters:
+ *      duration: number of TCNT1 ticks that have transpired since the last 
+ *          edge event.
+ */
+void IR_BufferingStreamDecoder::edgeEvent(uint16_t duration) {
     // Don't overrun the frame until reset()
     if (0 != _frame_complete) {
         return;
@@ -196,6 +295,9 @@ void IR_BufferingStreamDecoder::decodeEdge(uint16_t duration) {
     _segments[_count++].duration = duration;
 }
 
+/**
+ * 
+ */
 void IR_BufferingStreamDecoder::setSegmentBuffer(ir_segment_t *segments, 
         uint8_t num_segments) {
     cli();
@@ -208,7 +310,7 @@ void IR_BufferingStreamDecoder::setSegmentBuffer(ir_segment_t *segments,
     sei();
 }
 
-void IR_BufferingStreamDecoder::receiveNextFrame(void) {
+void IR_BufferingStreamDecoder::readyForNextFrame(void) {
     cli();
     _count = 0;
     _frame_complete = 0;
