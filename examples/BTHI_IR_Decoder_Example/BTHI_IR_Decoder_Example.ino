@@ -3,6 +3,7 @@
  *
  * This example uses a buffered decoding strategy. When a frame is seen, it's 
  * printed out and then the next frame can be received.
+ *
  */
 #include <BTHI_IR_Decoder.h>
 
