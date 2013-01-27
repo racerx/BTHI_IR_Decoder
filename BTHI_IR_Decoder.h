@@ -60,7 +60,6 @@ public:
 	uint8_t isDone(void);
 	uint8_t getSegmentCount(void);
 	uint8_t getSegmentOverflowCount(void);
-	uint8_t clearSegmentOverflowCount(void);
 };
 
 extern IR_HwInterface IR_InputCaptureInterface;
