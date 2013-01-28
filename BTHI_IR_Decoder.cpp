@@ -17,7 +17,6 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
- * Copyright (c) 2013, Bryan Thomas (BTHI) and Christopher Myers
  *
  *---------------------------------------------------------------------------
  *
@@ -29,29 +28,9 @@
  * note the duration between the edge and the previous edge of the frame. This
  * gives you enough information to reconstruct the binary data from the IR
  * emitter.
- * 
- * Here is some example data for a Samsung remote when Vol+ button is pressed.
- * It gives you an idea of the kind of data you'll be processing.
  *
- * 0: 9067      [First half of start of frame. 4.5ms]
- * 1: 8818      [Second half of start of frame. 4.5ms]
- * 2: 1252      [Always comes first in a bit. 0.56ms]
- * 3: 3273      [Bit is a 1 because the second half is ~1.6ms although
- *               technically, the spec says it should be 2.25ms]
- * 4: 1208      
- * 5: 3273      [Bit is a 1]
- * 6: 1208
- * 7: 3272      [Bit is a 1]
- * 8: 1207
- * 9: 1025      [Bit is a 0]
- * 10: 1207
- * 11: 1025     [Bit is a 0]
- * 12: 1207
- * 13: 1024     [Bit is a 0]
- * 14: 1207
- * 15: 1016     [Bit is a 0]
- * 16: 1207
- * ... Continued up to 66 edges.
+ * See decodeFrameSamsung() for more information on what these frames look
+ * like.
  *
  * Notes on use of Timer 1:
  *  The use of Timer 1's input capture has the advantages of:
@@ -80,14 +59,13 @@
  *    - May miss frames while processing the last received frame
  *    - Can be made to evaluate the waveform against many known protocols
  *
- *
- * Resources:
+ * Web Resources:
  *  IR Theory Generally - http://www.sbprojects.com/knowledge/ir/nec.php
  *  More Protocol - http://www.techdesign.be/projects/011/011_waves.htm
  *
  */
 #include <Arduino.h>
-#include "BTHI_IR_Decoder.h"
+#include <BTHI_IR_Decoder.h>
 
 #define IR_DEFAULT_IC_PIN   8
 
@@ -120,7 +98,7 @@ IR_HwInterface::IR_HwInterface() {
  * Parameters:
  *      stream_decoder: This delegate will be fed edges and end of frame 
  *          events.
- *      pin: Must be pin 8 on the Uno. TODO: what about others?
+ *      pin: Must be pin 8 on the Uno. TODO: what about other hardware?
  *      polarity: This determines what the initial edge the input capture 
  *          unit should trigger on. If your receiver is nominally HIGH when 
  *          there is no IR activity, then you should choose IR_POLARITY_HIGH. 
@@ -135,53 +113,57 @@ IR_HwInterface::IR_HwInterface() {
  */
 void IR_HwInterface::setup(IR_StreamDecoder *stream_decoder, 
         uint8_t pin, ir_polarity_t polarity) {
-    // Make sure interrupts are disabled.  We're not entirely sure of what was
-    // done before calling our setup.
+    /* Make sure interrupts are disabled.  We're not entirely sure of what was
+     * done before calling our setup.
+     */
     cli();
     
     _pin = pin;
     _decoder = stream_decoder;
    
      
-    // Set Initial Timer value
+    /* Set Initial Timer value */
     TCNT1 = 0;
     
-    // Put timer 1 into "Normal" mode for input capture
+    /* Put timer 1 into "Normal" mode for input capture */
     TCCR1A = 0;
 
     if (IR_POLARITY_AUTO == polarity) {
-        // Have to set the pin mode to input early if it's auto to read the
-        // level.  We'll call this again later, but that shouldn't have any
-        // side effects.
+        /* Have to set the pin mode to input early if it's auto to read the
+         * level.  We'll call this again later, but that shouldn't have any
+         * side effects.
+         */
         pinMode(pin, INPUT);
     
         if (0 == digitalRead(_pin)) {
-            // First edge is rising
+            /* First edge is rising */
             TCCR1B |= (1 << ICES1);
         } else {
-            // First edge is falling
+            /* First edge is falling */
             TCCR1B &= ~(1 << ICES1);
         }
     } else if (IR_POLARITY_LOW == polarity) {
-        // First edge is rising
+        /* First edge is rising */
         TCCR1B |= (1 << ICES1);
     } else {
-        // First edge is falling
+        /* First edge is falling */
         TCCR1B &= ~(1 << ICES1);
     }
 
-    // Enable input capture interrupts only
+    /* Enable input capture interrupts only */
     TIMSK1 = (1 << ICIE1);
 
-    // Noise cancellation on and prescaler /8
-    // This gives a tick period of 50us
-    // 1 / (16000000 Hz /8) = 50us
+    /* Noise cancellation on and prescaler /8. This gives a tick period of 
+     * 50us:
+     *
+     *      1 / (16000000 Hz /8) = 50us
+     */
     TCCR1B = (1 << ICNC1) | (1 << CS11);
 
-    // The pin needs to be an input for input capture to work
+    /* The pin needs to be an input for input capture to work */
     pinMode(pin, INPUT);
 
-    // Re-enable interrupts
+    /* Re-enable interrupts */
     sei();
 }
 
@@ -200,11 +182,12 @@ void IR_HwInterface::setup(IR_StreamDecoder *stream_decoder,
  * Return: Nothing
  */
 void IR_HwInterface::overflowInterrupt(void) {
-    // No more overflow interrupt until it is re-enabled in the capture
-    // interrupt.
+    /* No more overflow interrupt until it is re-enabled in the capture
+     * interrupt.
+     */
     TIMSK1 &= ~(1<<TOIE1);
     
-    // Tell our decoding delegate that it's the end of the frame
+    /* Tell our decoding delegate that it's the end of the frame */
     if (NULL != _decoder) {
         _decoder->endOfFrameEvent();
     }
@@ -231,32 +214,34 @@ void IR_HwInterface::captureInterrupt(void) {
     uint16_t elapsed;
     uint8_t level;
     
-    // Reset TCNT1
+    /* Reset TCNT1 */
     TCNT1 = 0;
 
-    // ICR1 contains TCNT1 value at the time of the edge event
+    /* ICR1 contains TCNT1 value at the time of the edge event */
     elapsed = ICR1;
     
-    // Start listening for overflow as well as the input capture interrupt
-    // Make sure to clear the overflow flag, otherwise it will trigger
-    // immediately, giving us a premature end of frame
+    /* Start listening for overflow as well as the input capture interrupt
+     * Make sure to clear the overflow flag, otherwise it will trigger
+     * immediately, giving us a premature end of frame
+     */
     TIFR1 = (1 << TOV1);
     TIMSK1 = (1 << ICIE1) | (1 << TOIE1);
 
-    // Figure out what the current level is by looking at what condition we
-    // had used to capture the edge.  If it was rising, the level is obviously
-    // HIGH and we need to now look for a falling edge (and vice versa).
+    /* Figure out what the current level is by looking at what condition we
+     * had used to capture the edge.  If it was rising, the level is obviously
+     * HIGH and we need to now look for a falling edge (and vice versa).
+     */
     level = (TCCR1B & (1 << ICES1)) != 0 ? HIGH : LOW;
 
     if (LOW == level) {
-        // Next edge is rising
+        /* Next edge is rising */
         TCCR1B |= (1 << ICES1);
     } else {
-        // Next edge is falling
+        /* Next edge is falling */
         TCCR1B &= ~(1 << ICES1);
     }
 
-    // Pass it on to the decode delegate
+    /* Pass it on to the decode delegate */
     if (NULL != _decoder) {
         _decoder->edgeEvent(elapsed);
     }
@@ -287,7 +272,7 @@ IR_BufferingStreamDecoder::IR_BufferingStreamDecoder(void) {
  * careful, because reception could be in progress at the time. We recommend
  * calling it like this:
  *
- *  if (decoder.isDone()) {
+ *  if (decoder.isFrameAvailable()) {
  *      decoder.debugPrintFrame();
  *      decoder.receiveNextFrame();
  *  }
@@ -350,19 +335,20 @@ void IR_BufferingStreamDecoder::endOfFrameEvent(void) {
  * Return: Nothing
  */
 void IR_BufferingStreamDecoder::edgeEvent(uint16_t duration) {
-    // Don't overrun the frame until reset()
+    /* Don't overrun the frame until readyForNextFrame() */
     if (0 != _frame_complete) {
         return;
     }
     
-    // First edge is ignored because it doesn't complete a segment.
-    // That is, it has no meaningful duration.
+    /* First edge is ignored because it doesn't complete a segment.
+     * That is, it has no meaningful duration. 
+     */
     if (1 == _first_edge) {
         _first_edge = 0;
         return;
     }
 
-    // Record the sample at the current index
+    /* Record the sample at the current index */
     if (_count >= _max_segments) {
         if (_segment_overflows < (uint8_t)0xFF) {
             _segment_overflows++;
@@ -418,7 +404,7 @@ void IR_BufferingStreamDecoder::setSegmentBuffer(ir_segment_t *segments,
 /**
  * Tells the buffering decoder delegate that it's ok to start receiving the
  * next frame. You need to call this when you're done with the previous frame.
- * That is, once isDone() returns 1, you need to call this before we'll
+ * That is, once isFrameAvailable() returns 1, you need to call this before we'll
  * process any more incoming frames.
  *
  * Parameters: None
@@ -445,14 +431,14 @@ void IR_BufferingStreamDecoder::readyForNextFrame(void) {
  * Return: 0 - If there is no frame available
  *         1 - If the frame is completed and ready to process
  */
-uint8_t IR_BufferingStreamDecoder::isDone(void) {
+uint8_t IR_BufferingStreamDecoder::isFrameAvailable(void) {
     return _frame_complete;
 }
 
 /**
  * Tells you how many segments were recorded in the frame. This function only
  * returns a non-zero result after the frame has been completed. That is,
- * until isDone() returns true, this function returns 0.
+ * until isFrameAvailable() returns true, this function returns 0.
  *
  * Parameters: None
  *
@@ -498,6 +484,110 @@ uint8_t IR_BufferingStreamDecoder::getSegmentCount(void) {
  */
 uint8_t IR_BufferingStreamDecoder::getSegmentOverflowCount(void) {
     return _segment_overflows;
+}
+
+/**
+ * Complement to setSegmentBuffer, this function returns the pointer that the
+ * decoder is using to store the segments.
+ *
+ * Parameters: None
+ *
+ * Return: The pointer supplied with setSegmentBuffer. Can be NULL.
+ */
+ir_segment_t *IR_BufferingStreamDecoder::getSegmentBuffer(void) {
+    return _segments;
+}
+
+/**
+ * Decodes a frame using the Samsung protocol. You should call this after you
+ * know the frame has been fully received:
+ *
+ *  uint32_t data;
+ *  int8_t result;
+ *  if (decoder.isFrameAvailable()) {
+ *      result = decodeFrameSamsung(&decoder, &data);
+ *      // ... check result code and do someting with data ...
+ *      decoder.readyForNextFrame();
+ *  }
+ *
+ *
+ * Here is some example data for a Samsung remote when Vol+ button is pressed.
+ * It gives you an idea of what this function needs to do.
+ *
+ * 0: 9067      [First half of start of frame. ~4.5ms]
+ * 1: 8818      [Second half of start of frame. ~4.5ms]
+ * 2: 1252      [Always comes first in a bit. ~0.56ms]
+ * 3: 3273      [Bit is a 1 because the second half is ~1.6ms although
+ *               technically, the spec says it should be 2.25ms]
+ * 4: 1208      
+ * 5: 3273      [Bit is a 1]
+ * 6: 1208
+ * 7: 3272      [Bit is a 1]
+ * 8: 1207
+ * 9: 1025      [Bit is a 0]
+ * 10: 1207
+ * 11: 1025     [Bit is a 0]
+ * 12: 1207
+ * 13: 1024     [Bit is a 0]
+ * 14: 1207
+ * 15: 1016     [Bit is a 0]
+ * 16: 1207
+ * ... Continued up to 67th edge.
+ *
+ *
+ * Parameters:
+ *      bufferedDecoder: A pointer to a buffering stream decoder.
+ *      data: A pointer to a 32-bit location that will hold the decode result.
+ *
+ * Return:
+ *      IR_E_OK - If the decode is successful and *data is written.
+ *      IR_E_SHORT_FRAME - The frame wasn't long enough to make sense of.
+ *      IR_E_INVALID_START_OF_FRAME - This is likely not a Samsung remote.
+ */
+int8_t decodeFrameSamsung(IR_BufferingStreamDecoder *bufferedDecoder,
+        uint32_t *data) {
+    ir_segment_t *segments = bufferedDecoder->getSegmentBuffer();
+    uint8_t count = bufferedDecoder->getSegmentCount();
+    uint32_t datagram = 0;
+
+    /* There needs to be 67 edges.  Two for the preamble (two equally-spaced
+     * segments of 4.5ms each) and then 2 segments for each bit to follow. 
+     * There are additional stop-bit edges at the end that we don't care
+     * about. */
+    if (count < 66) {
+        return IR_E_SHORT_FRAME;
+    }
+
+    /* Check for the first two segments to be ~4.5 ms each. That means around
+     * 9000 ticks. The IR_DURATION_MATCH macro takes care of this. We just
+     * need to tell it to look for 4500us
+     */
+    if (!(IR_DURATION_MATCH_US(segments[0].duration, 4500, 200)
+            && IR_DURATION_MATCH_US(segments[1].duration, 4500, 200))) {
+        /* Likely not a Samsung remote or the frame is otherwise malformed */
+        return IR_E_INVALID_START_OF_FRAME;
+    }
+
+    /* Look at every other edge. If the duration is short (~560us), then it's
+     * a zero. If it's longer, it's a 1. We'll just assume that it's a 1 if
+     * it's not a zero, but you could make an argument for more robust
+     * checking.
+     */
+    for (uint8_t i = 3; i < 66; i += 2) {
+        if (IR_DURATION_MATCH_US(segments[i].duration, 560, 100)) {
+            /* 0 */
+            datagram <<= 1;
+        } else {
+            /* 1 */
+            datagram <<= 1;
+            datagram |= 1;
+        }
+    }
+
+    /* Copy the result to the destination ptr */
+    *data = datagram;
+
+    return IR_E_OK;
 }
 
 /**

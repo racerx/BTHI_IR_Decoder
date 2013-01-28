@@ -28,6 +28,23 @@
 #include <platform.h>
 #include <stdlib.h>
 
+/**
+ * This macro can tell you whether the duration in ticks corresponds to a
+ * range of microseconds.
+ */
+#define IR_DURATION_MATCH_US(actual_ticks, expected_us, tolerance_us) \
+    ( \
+    (actual_ticks >= ((expected_us - tolerance_us) * (1e-6 / 5e-7))) && \
+    (actual_ticks <= ((expected_us + tolerance_us) * (1e-6 / 5e-7))) \
+    )
+
+/**
+ * Return codes that can be used for decode routines.
+ */
+#define IR_E_INVALID_START_OF_FRAME     -2
+#define IR_E_SHORT_FRAME                -1
+#define IR_E_OK                         0
+
 /* Structure to hold segment information. We used a structure so that if we
  * ran into a protocol that needed both the duration and level, we'd be able
  * to accomodate it.
@@ -95,12 +112,17 @@ public:
 
 	void setSegmentBuffer(ir_segment_t *segments, 
 		uint8_t num_segments);
+    ir_segment_t *getSegmentBuffer(void);
 	void debugPrintFrame(void);
 	void readyForNextFrame(void);
-	uint8_t isDone(void);
+	uint8_t isFrameAvailable(void);
 	uint8_t getSegmentCount(void);
 	uint8_t getSegmentOverflowCount(void);
 };
+
+extern int8_t decodeFrameSamsung(
+		IR_BufferingStreamDecoder *bufferedDecoder, 
+		uint32_t *data);
 
 extern IR_HwInterface IR_InputCaptureInterface;
 

@@ -27,7 +27,7 @@ void setup() {
 
 void loop() {
   
-    if (decoder.isDone()) {
+    if (decoder.isFrameAvailable()) {
       Serial.println("\n------ Frame Received! ------");
       decoder.debugPrintFrame();
       
