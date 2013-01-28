@@ -120,6 +120,9 @@ public:
 	uint8_t getSegmentOverflowCount(void);
 };
 
+extern int8_t decodeFrameApple(
+		IR_BufferingStreamDecoder *bufferedDecoder, 
+		uint32_t *data);
 extern int8_t decodeFrameSamsung(
 		IR_BufferingStreamDecoder *bufferedDecoder, 
 		uint32_t *data);

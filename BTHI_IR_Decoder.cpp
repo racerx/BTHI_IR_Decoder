@@ -591,6 +591,93 @@ int8_t decodeFrameSamsung(IR_BufferingStreamDecoder *bufferedDecoder,
 }
 
 /**
+ * Decodes a frame using the Apple protocol. You should call this after you
+ * know the frame has been fully received:
+ *
+ *  uint32_t data;
+ *  int8_t result;
+ *  if (decoder.isFrameAvailable()) {
+ *      result = decodeFrameApple(&decoder, &data);
+ *      // ... check result code and do someting with data ...
+ *      decoder.readyForNextFrame();
+ *  }
+ *
+ *
+ * Here is some example data for a Samsung remote when Vol+ button is pressed.
+ * It gives you an idea of what this function needs to do.
+ *
+ * 0: 18217     [First half of start of frame. ~9ms]
+ * 1: 8892      [Second half. 4.5ms]
+ * 2: 1159      [Always comes first in a bit. ~600ms]
+ * 3: 1075      [This bit is a 0]
+ * 4: 1157
+ * 5: 3279      [This is a 1]
+ * 6: 1157
+ * 7: 3278
+ * 8: 1158
+ * 9: 3278
+ * 10: 1157
+ * 11: 1075
+ * 12: 1158
+ * ... Continued up to 67th edge.
+ *
+ *
+ * Parameters:
+ *      bufferedDecoder: A pointer to a buffering stream decoder.
+ *      data: A pointer to a 32-bit location that will hold the decode result.
+ *
+ * Return:
+ *      IR_E_OK - If the decode is successful and *data is written.
+ *      IR_E_SHORT_FRAME - The frame wasn't long enough to make sense of.
+ *      IR_E_INVALID_START_OF_FRAME - This is likely not a Samsung remote.
+ */
+int8_t decodeFrameApple(IR_BufferingStreamDecoder *bufferedDecoder,
+        uint32_t *data) {
+    ir_segment_t *segments = bufferedDecoder->getSegmentBuffer();
+    uint8_t count = bufferedDecoder->getSegmentCount();
+    uint32_t datagram = 0;
+
+    /* There needs to be 67 edges.  Two for the preamble (two segments of 9 
+     * then 4.5ms) and then 2 segments for each bit to follow. 
+     * There are additional stop-bit edges at the end that we don't care
+     * about. */
+    if (count < 66) {
+        return IR_E_SHORT_FRAME;
+    }
+
+    /* Check for the first two segments to be ~4.5 ms each. That means around
+     * 9000 ticks. The IR_DURATION_MATCH macro takes care of this. We just
+     * need to tell it to look for 4500us
+     */
+    if (!(IR_DURATION_MATCH_US(segments[0].duration, 9000, 200)
+            && IR_DURATION_MATCH_US(segments[1].duration, 4500, 200))) {
+        /* Likely not an Apple remote or the frame is otherwise malformed */
+        return IR_E_INVALID_START_OF_FRAME;
+    }
+
+    /* Look at every other edge. If the duration is short (~560us), then it's
+     * a zero. If it's longer, it's a 1. We'll just assume that it's a 1 if
+     * it's not a zero, but you could make an argument for more robust
+     * checking.
+     */
+    for (uint8_t i = 3; i < 66; i += 2) {
+        if (IR_DURATION_MATCH_US(segments[i].duration, 600, 100)) {
+            /* 0 */
+            datagram <<= 1;
+        } else {
+            /* 1 */
+            datagram <<= 1;
+            datagram |= 1;
+        }
+    }
+
+    /* Copy the result to the destination ptr */
+    *data = datagram;
+
+    return IR_E_OK;
+}
+
+/**
  * ISR - Timer1 Capture Interrupt. This function will go into the vector 
  * table. See IR_HwInterface::captureInterrupt() for more details.
  */
